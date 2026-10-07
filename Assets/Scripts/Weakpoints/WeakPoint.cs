@@ -1,0 +1,278 @@
+using UnityEngine;
+
+public class WeakPoint : MonoBehaviour
+{
+    [HideInInspector] public WeakPointManager weakpointManager;
+    public WeakPointType weakPointType;
+    public string PointId => pointId;
+    public bool IsTough => isTough;
+    public bool IsWarded => isWarded;
+    // Michael edit (special-shot): Special weakpoints can only be destroyed by the Special Shot.
+    public bool IsSpecial => weakPointType == WeakPointType.Special;
+    // Michael edit (special-shot): lets the manager avoid re-showing visible weakpoints (Show() resets tough hits and fade).
+    public bool IsShown => isShown;
+    public int RemainingShotsToDestroy => remainingShots;
+    // Michael edit (impact-frame): raised when a Special weakpoint is destroyed, passes its world position.
+    public static event System.Action<Vector3> SpecialDestroyed;
+
+    [Header("Identity")]
+    [SerializeField] private string pointId;
+
+    [Header("Extra Weakpoint Behaviors")]
+    [SerializeField] private bool isWarded;
+    [SerializeField] private bool isTough;
+    [SerializeField, Min(1)] private int shotsToDestroy = 2;
+
+    [Header("Overlay Visuals")]
+    [SerializeField] private SpriteRenderer wardedOverlayRenderer;
+
+    // visuals for each weakpoint type
+    [SerializeField] private GameObject ironElement;
+    [SerializeField] private GameObject silverElement;
+    // Michael edit (special-shot): visual branch for Special weakpoints.
+    [SerializeField] private GameObject specialElement;
+
+    // Cached runtime references so we avoid repeatedly looking up components
+    private GameObject currentElement;
+    private SpriteRenderer[] currentRenderers;
+    private SpriteRenderer[] allRenderers;
+    private SphereCollider weakPointCollider;
+
+    // isShown tracks whether this weakpoint is the currently active target in the weakpoint sequence
+    // currentAlpha is smoothed over time to avoid hard pop-in transitions
+    private bool isShown;
+    public bool hasBeenHit;
+    private float currentAlpha;
+    private int remainingShots;
+
+    // used to pass the enemy's centre to the popup for cool tilting
+    public Vector3 OwnerCentre => weakpointManager != null ? weakpointManager.transform.position : transform.position;
+
+    private void OnEnable()
+    {
+        WeakPointRegistry.Register(this);
+    }
+
+    private void OnDisable()
+    {
+        WeakPointRegistry.Unregister(this);
+    }
+    private void Awake()
+    {
+        // cache expensive lookups once at startup for performance and cleaner updating
+        weakPointCollider = gameObject.GetComponent<SphereCollider>();
+        allRenderers = gameObject.GetComponentsInChildren<SpriteRenderer>(true);
+
+        // Decide which visual branch this weakpoint should use based on its type
+        if (weakPointType == WeakPointType.Iron) currentElement = ironElement;
+        else if (weakPointType == WeakPointType.Silver) currentElement = silverElement;
+        // Michael edit (special-shot): Special branch, log updated to match.
+        else if (weakPointType == WeakPointType.Special) currentElement = specialElement;
+        else Debug.Log(gameObject + " is broken!! : weakpoint type is somehow not iron, silver or special!");
+
+        // cache only the active branch's renderers so alpha updates affect the correct visuals
+        if (currentElement != null)
+            currentRenderers = currentElement.GetComponentsInChildren<SpriteRenderer>(true);
+
+        // ensure weakpoints start hidden until the weakpointManager explicitly shows the current target
+        Hide();
+    }
+
+    private void LateUpdate()
+    {
+        // skips everything for weakpoints that are not active or have no valid renderers
+        if (!isShown || currentRenderers == null || currentRenderers.Length == 0)
+            return;
+
+        // Prefer the dedicated weakpoint camera profile; fallback to main camera for robustness
+        Camera cam = WeakPointCamera.ActiveCamera != null ? WeakPointCamera.ActiveCamera : Camera.main;
+
+        // exit if there is no camera to check against, though this shouldn't happen since the weakpointManager ensures a camera exists before showing weakpoints
+        if (cam == null)
+            return;
+
+        // Viewport-space check ensures weakpoints only appear when actually on screen
+        // x/y in [0..1] = inside camera bounds, z > 0 = in front of camera.
+        Vector3 viewport = cam.WorldToViewportPoint(transform.position);
+        bool inFront = viewport.z > 0f;
+        const float viewportPadding = 0.08f;
+        bool inViewport =
+            viewport.x >= -viewportPadding && viewport.x <= 1f + viewportPadding &&
+            viewport.y >= -viewportPadding && viewport.y <= 1f + viewportPadding;
+
+        // Distance check controls long-range visibility and fade behavior
+        float distance = Vector3.Distance(cam.transform.position, transform.position);
+        bool inRange = distance <= WeakPointCamera.MaxRenderDistance;
+
+        // Default hidden unless all visibility conditions pass
+        float targetAlpha = 0f;
+        if (inFront && inViewport && inRange)
+        {
+            // Map distance to alpha:
+            // - at MaxRenderDistance => 0
+            // - at FullAlphaDistance (or closer) => 1
+            targetAlpha = Mathf.InverseLerp(
+                WeakPointCamera.MaxRenderDistance,
+                WeakPointCamera.FullAlphaDistance,
+                distance);
+        }
+
+        // Smoothly approach target alpha each frame to remove abrupt pops.
+        currentAlpha = Mathf.MoveTowards(
+            currentAlpha,
+            targetAlpha,
+            WeakPointCamera.FadeSpeed * Time.deltaTime);
+
+        // Apply final opacity to active weakpoint sprites
+        ApplyAlpha(currentAlpha);
+    }
+
+    public void Show()
+    {
+        // Mark as currently active in sequence and re-enable hit detection.
+        isShown = true;
+        remainingShots = isTough ? Mathf.Max(1, shotsToDestroy) : 1;
+
+        if (weakPointCollider != null)
+            weakPointCollider.enabled = true;
+
+        // reset all child visuals first, then only enable the selected branch
+        foreach (SpriteRenderer renderer in allRenderers)
+            renderer.enabled = false;
+
+        if (currentRenderers == null)
+            return;
+
+        foreach (SpriteRenderer renderer in currentRenderers)
+            renderer.enabled = true;
+
+        // start from transparent so entry into view/range fades in smoothly
+        currentAlpha = 0f;
+        ApplyAlpha(currentAlpha);
+    }
+
+    public void Hide()
+    {
+        isShown = false;
+        if (weakPointCollider != null)
+            weakPointCollider.enabled = false;
+
+        if (allRenderers != null) // <-- guard against pre-Awake calls
+        {
+            foreach (SpriteRenderer renderer in allRenderers)
+                renderer.enabled = false;
+        }
+
+        if (wardedOverlayRenderer != null)
+            wardedOverlayRenderer.enabled = false;
+
+        currentAlpha = 0f;
+    }
+    
+    public void SetUpWeakpoint(WeakPointManager manager)
+    {
+        weakpointManager = manager; 
+        Hide();
+    }
+
+    public void OnHit(WeakPointType type)
+    {
+        // Ignore mismatched bullet types to enforce iron/silver behavior
+        if (type != weakPointType) return;
+        // Warded weakpoints cannot be destroyed until unlocked externally
+        if (isWarded) return;
+        // Tough weakpoints require multiple successful hits
+        remainingShots -= 1;
+        if (remainingShots > 0) return;
+
+        if (weakPointCollider != null)
+            weakPointCollider.enabled = false;
+
+        // Launch the visual effect, then resolve gameplay immediately. The
+        // generated shatter mesh continues independently after this weakpoint
+        // is hidden and the manager advances the sequence.
+        ShatterEffect shatter = GetComponent<ShatterEffect>();
+        if (shatter != null && currentRenderers != null && currentRenderers.Length > 0)
+        {
+            // Weakpoints are reused between champion phases, so only the
+            // temporary shatter mesh should be destroyed on completion.
+            shatter.Play(currentRenderers[0], false);
+        }
+
+        // Michael edit (impact-frame): notify listeners (ImpactFrameController) that a Special weakpoint was destroyed.
+        if (IsSpecial)
+            SpecialDestroyed?.Invoke(transform.position);
+
+        ResolveHit();
+    }
+
+    private void ResolveHit()
+    {
+        // Visual removal belongs to the weakpoint itself, not to its position
+        // in the manager's sequence. This is especially important when all
+        // weakpoints are visible and can be destroyed out of order.
+        Hide();
+        hasBeenHit = true;
+        weakpointManager?.NotifyWeakPointResolved(this);
+    }
+
+    public float GetAccuracy(Ray ray)
+    {
+        if (weakPointCollider == null) return 1f;
+
+        Vector3 centre = transform.TransformPoint(weakPointCollider.center);
+        Vector3 scale = transform.lossyScale;
+        float radius = weakPointCollider.radius *
+            Mathf.Max(Mathf.Abs(scale.x), Mathf.Abs(scale.y), Mathf.Abs(scale.z));
+
+        if (radius <= 0f) return 1f;
+
+        // how close the ray passed to the centre of the weakpoint sphere
+        float along = Vector3.Dot(centre - ray.origin, ray.direction);
+        float missDistance = Vector3.Distance(ray.origin + ray.direction * along, centre);
+
+        return 1f - Mathf.Clamp01(missDistance / radius);
+    }
+
+    public Vector3 GetWorldCenter()
+    {
+        if (weakPointCollider == null) return transform.position;
+        return transform.TransformPoint(weakPointCollider.center);
+    }
+
+    public void UnlockWeakPoint()
+    {
+        isWarded = false;
+        UpdateWardedOverlay(currentAlpha);
+    }
+
+    private void ApplyAlpha(float alpha)
+    {
+        // push alpha to each renderer and disable close to zero sprites
+        foreach (SpriteRenderer renderer in currentRenderers)
+        {
+            Color c = renderer.color;
+            c.a = alpha;
+            renderer.color = c;
+            renderer.enabled = alpha > 0.001f;
+        }
+
+        UpdateWardedOverlay(alpha);
+    }
+
+    private void UpdateWardedOverlay(float alpha)
+    {
+        if (wardedOverlayRenderer == null)
+            return;
+
+        bool showOverlay = isShown && isWarded && alpha > 0.001f;
+        wardedOverlayRenderer.enabled = showOverlay;
+
+        if (!showOverlay)
+            return;
+
+        Color c = wardedOverlayRenderer.color;
+        c.a = alpha;
+        wardedOverlayRenderer.color = c;
+    }
+}

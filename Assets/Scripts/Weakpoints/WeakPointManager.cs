@@ -1,0 +1,140 @@
+using UnityEngine;
+
+public class WeakPointManager : MonoBehaviour
+{
+    [SerializeField] private bool resetSequenceEveryStagger = false;
+    [SerializeField] private bool alwaysShowAll;
+    public WeakPoint[] weakpoints;
+    private int currentWeakpoint = 0;
+    public int CurrentWeakpoint => currentWeakpoint;
+    public bool debugMode;
+    [HideInInspector] public bool dieOnWeakpointsComplete = true;
+    private int cyclesComplete = 0;
+    public int CyclesComplete => cyclesComplete;
+    [HideInInspector] public bool handleOwnDestruction = true;
+
+    void Start()
+    {
+        SetupWeakpoints();
+    }
+
+    //sanity check so that weakpoints are actually a component that is usable
+    private bool HasWeakpoints()
+    {
+        return weakpoints != null && weakpoints.Length > 0;
+    }
+
+    private bool CurrentIndexValid()
+    {
+        return HasWeakpoints() && currentWeakpoint >= 0 && currentWeakpoint < weakpoints.Length;
+    }
+
+    public void SetupWeakpoints()
+    {
+        currentWeakpoint = 0;
+
+        if (!HasWeakpoints()) return;
+
+        foreach (WeakPoint weakpoint in weakpoints)
+        {
+            weakpoint.hasBeenHit = false;
+            weakpoint.SetUpWeakpoint(this); //names itself manager within weakpoint, ands sets up the weakpoint.
+        }
+        if (debugMode) Debug.Log($"[{this}] Setup Weakpoints: [{weakpoints}] for {gameObject}");
+        // weakpoints[0].Show(); // activate the first weakpoint in the index
+        if (alwaysShowAll) StartSequence();
+    }
+
+    public void StartSequence()
+    {
+        if (!HasWeakpoints()) return;
+
+        if (resetSequenceEveryStagger) SetupWeakpoints();
+        // EDIT (special-shot): guard against starting a sequence that's already complete.
+        if (!CurrentIndexValid()) return;
+
+        // EDIT (special-shot): alwaysShowAll now only shows unresolved weakpoints.
+        if (alwaysShowAll) ShowAvailable();
+        else weakpoints[currentWeakpoint].Show(); // activate the first weakpoint in the index
+        if (debugMode) Debug.Log($"[{this}] Started Weakpoint Sequence for {gameObject}");
+    }
+
+    // Michael edit (special-shot): alwaysShowAll reveal. Shows every unresolved weakpoint, skipping anything already visible
+    // so tough hit counts and fades aren't reset.
+    private void ShowAvailable()
+    {
+        foreach (WeakPoint weakpoint in weakpoints)
+        {
+            if (weakpoint == null || weakpoint.hasBeenHit || weakpoint.IsShown) continue;
+            weakpoint.Show();
+        }
+    }
+
+    public void EndSequence()
+    {
+        if (!HasWeakpoints()) return;
+
+        // weakpoints[currentWeakpoint].Hide(); // hide current weakpoint
+        foreach (WeakPoint weakPoint in weakpoints) weakPoint.Hide(); // hide all weakpoints
+        if (debugMode) Debug.Log($"[{this}] Ended Weakpoint Sequence for {gameObject}");
+    }
+
+    private void NextInSequence()
+    {
+        if (debugMode) Debug.Log($"[{this}] Next Weakpoint in sequence on {gameObject} (Weakpoint #{currentWeakpoint + 1})");
+        weakpoints[currentWeakpoint].Hide();
+        currentWeakpoint += 1;
+        if (currentWeakpoint < weakpoints.Length)
+        {
+            // EDIT (special-shot): alwaysShowAll no longer re-shows visible weakpoints.
+            if (alwaysShowAll) ShowAvailable();
+            else weakpoints[currentWeakpoint].Show();
+        }
+        else SequenceComplete();
+    }
+
+    // Called by a weakpoint after its hit VFX has finished. Completed weakpoints
+    // are consumed in sequence order, including queued hits when all are visible.
+    public void NotifyWeakPointResolved(WeakPoint weakpoint)
+    {
+        if (!HasWeakpoints() || weakpoint == null) return;
+
+        bool belongsToManager = false;
+        foreach (WeakPoint managedWeakpoint in weakpoints)
+        {
+            if (managedWeakpoint == weakpoint)
+            {
+                belongsToManager = true;
+                break;
+            }
+        }
+
+        if (!belongsToManager) return;
+
+        while (CurrentIndexValid() && weakpoints[currentWeakpoint] != null && weakpoints[currentWeakpoint].hasBeenHit)
+            NextInSequence();
+    }
+
+    private void SequenceComplete() //checks for miniboss cycles
+    {
+        cyclesComplete++; 
+        if (!dieOnWeakpointsComplete) SetupWeakpoints();
+        else if (handleOwnDestruction)
+        {
+            Debug.Log($"[{this}] was killed!");
+            Destroy(gameObject);
+        }
+    }
+
+    //returns total amount of weakpoints for the enemy
+    public int GetTotalWeakpoints()
+    {
+        return HasWeakpoints() ? weakpoints.Length : 0;
+    }
+    
+    public bool UnlockWeakPointById(string weakPointId)
+    {
+        return WeakPointRegistry.UnlockWardedWeakPointById(weakPointId);
+
+    }
+}

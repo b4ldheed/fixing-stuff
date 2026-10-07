@@ -1,0 +1,122 @@
+using UnityEngine;
+
+public class FearBar : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private WeaponEvents weaponEvents;
+
+    [Header("Fear")]
+    [SerializeField] private float maxFear = 100f;
+    public float MaxFear => maxFear;
+
+    [SerializeField] private float fearLevel = 0; // serialised so we can see it but do not modify directly
+    public float FearLevel => fearLevel;
+
+    [SerializeField, Tooltip("Default damage amount when an attack does not have one predefined.")] private float fearDamage = 10;
+    [SerializeField] private float fearHealPerShot = 5f; // fear reduced on each rewarded shot
+
+    [Header("Tick Rates (fear per second)")]
+    [Tooltip("How fast fear creeps up automatically at each rank. Healthy = all chill, Doomed! = panic time!!")]
+    [SerializeField] private float tickRateFine = 0f;
+    [SerializeField] private float tickRateLow = 0.5f;
+    [SerializeField] private float tickRateMedium = 1f;
+    [SerializeField] private float tickRateHigh = 2f;
+
+    public enum FearRank { Healthy, Fine, Critical, Doomed }
+    public FearRank CurrentRank { get; private set; } = FearRank.Healthy;
+
+    public event System.Action<FearRank> OnFearChanged;
+    public event System.Action OnFearMaxed;
+
+    private bool isMaxed = false;
+
+    public void Awake()
+    {
+        fearLevel = 0;
+        if (weaponEvents != null)
+        {
+            weaponEvents.ShotResolved += HandleShotResolved;
+        }
+    }
+
+    private void Update()
+    {
+        if (isMaxed) return;
+
+        float rate = CurrentRank switch
+        {
+            FearRank.Healthy => tickRateFine,
+            FearRank.Fine => tickRateLow,
+            FearRank.Critical => tickRateMedium,
+            FearRank.Doomed => tickRateHigh,
+            _ => 0f
+        };
+
+        if (rate > 0f)
+        {
+            ModifyFear(rate * Time.deltaTime);
+        }
+    }
+
+    public void TakeDamage() // flat fallback, used if an attack doesn't define its own value
+    {
+        ModifyFear(fearDamage);
+    }
+
+    public void TakeDamage(float amount) // overflow called by attacks with their own defined damage values
+    {
+        ModifyFear(amount);
+    }
+
+    public void HealFear(float amount) // convenience wrapper for external callers, like spirit had
+    {
+        ModifyFear(-amount);
+    }
+
+    public void ChangeFear(float amount) // generic call for modifying
+    {
+        ModifyFear(amount);
+    }
+
+    public void ModifyFear(float amount) // positive increases fear (worsens), negative decreases (improves)
+    {
+        if (isMaxed) return;
+
+        fearLevel = Mathf.Clamp(fearLevel + amount, 0, maxFear);
+
+        if (fearLevel >= maxFear)
+        {
+            isMaxed = true;
+            EvaluateRank();
+            OnFearMaxed?.Invoke();
+        }
+
+        EvaluateRank();
+    }
+
+    private void EvaluateRank()
+    {
+        FearRank newRank = fearLevel switch // check this bad boy out
+        {
+            <= 15 => FearRank.Healthy, // no more overflow! yay!!!
+            <= 40 => FearRank.Fine,
+            <= 80 => FearRank.Critical,
+            _ => FearRank.Doomed!
+        };
+
+        if (newRank != CurrentRank)
+        {
+            CurrentRank = newRank;
+        }
+
+        OnFearChanged?.Invoke(CurrentRank); // event for fearbarUI & spiritbar to update, happens every time player takes damage
+    }
+
+    private void HandleShotResolved(ShotResult result)
+    {
+        if (result.Outcome.IsRewarded())
+        {
+            ModifyFear(-fearHealPerShot);
+        }
+    }
+}
