@@ -13,9 +13,4 @@ public class TitleScreenManager : MonoBehaviour
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
     }
-
-    public void Play()
-    {
-        LoadingManager.Instance?.LoadScene(1);
-    }
 }

@@ -8,7 +8,7 @@ public class Door : MonoBehaviour, IInteractable
     {
         Open,
         Ajar,
-        Closed
+        Closed,
     }
 
     [Header("Door State")]
@@ -16,7 +16,7 @@ public class Door : MonoBehaviour, IInteractable
     [SerializeField] private DoorLock[] doorLocks;
 
     [Header("One-Way")]
-    [SerializeField] public bool isOneWay = false;
+    [SerializeField] private bool isOneWay = false;
     [ShowIf("isOneWay")]
     [Tooltip("When enabled, the accessible side is flipped to the door's back face.")]
     [SerializeField] private bool flipAccessibleSide = false;
@@ -47,7 +47,6 @@ public class Door : MonoBehaviour, IInteractable
     private Quaternion targetRotation;
     private PlayerMover player;
     private bool hasBeenOpened;
-    private bool bossLocked;
 
     private void Start()
     {
@@ -87,10 +86,6 @@ public class Door : MonoBehaviour, IInteractable
 
     public void Interact(InteractionContext context)
     {
-        // EDIT (boss-doors): checked first so nothing else runs while a boss fight is active
-        if (bossLocked)
-            return;
-
         bool locked = HasLockedLocks();
         bool effectivelyOneWay = IsEffectivelyOneWay();
         bool onAccessibleSide = IsPlayerOnAccessibleSide();
@@ -156,16 +151,6 @@ public class Door : MonoBehaviour, IInteractable
 
     public InteractionPrompt ResolvePrompt(InteractionContext context)
     {
-        // EDIT (boss-doors): moved to the top so it overrides the key lock and one-way prompts
-        if (bossLocked)
-        {
-            return new InteractionPrompt
-            {
-                label = "Locked", // "Demonic forces keep Miriam trapped."
-                actionName = ""
-            };
-        }
-
         bool locked = HasLockedLocks();
         bool effectivelyOneWay = IsEffectivelyOneWay();
         bool onAccessibleSide = IsPlayerOnAccessibleSide();
@@ -310,20 +295,7 @@ public class Door : MonoBehaviour, IInteractable
         return flipAccessibleSide ? !inFront : inFront;
     }
 
-    // EDIT (boss-Doors): public methods called by Boss enemies to lock and unlock boss-doors (potentially temp implementation for use on normal doors, will review once the Boss-Door asset is added).
-    // EDIT (boss-doors): always locks, even if the door was already closed
-    public void BossLock()
-    {
-        if (state != DoorState.Closed) Close();
-        bossLocked = true;
-    }
-
-    public void BossUnlock()
-    {
-        bossLocked = false;
-    }
-
-#if UNITY_EDITOR
+    #if UNITY_EDITOR
     private void OnDrawGizmosSelected()
     {
         if (!isOneWay) return;
@@ -341,5 +313,5 @@ public class Door : MonoBehaviour, IInteractable
         Gizmos.DrawLine(end, end + (-direction + right) * 0.3f);
         Gizmos.DrawLine(end, end + (-direction - right) * 0.3f);
     }
-#endif
+    #endif
 }

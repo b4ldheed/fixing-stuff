@@ -11,7 +11,7 @@ public class FlyingMovement : MonoBehaviour, IEnemyMovement
     [Header("Chase")]
     [SerializeField] private bool chaseEnabled = true;
     [ShowIf("chaseEnabled")]
-    [Tooltip("Orbit/strafe radius used only when the enemy has no attacks assigned.")]
+    [Tooltip("Default orbit/strafe radius. For multi-attack enemies, used as fallback when all attacks are on cooldown. Single-attack enemies use their attack range instead.")]
     [SerializeField] private float strafeRadius = 6f;
     [ShowIf("chaseEnabled")]
     [SerializeField] private float chaseSpeed = 8f;

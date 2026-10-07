@@ -10,6 +10,7 @@ public class NameEntryController : MonoBehaviour
 
     [Header("Config")]
     [SerializeField] private int maxNameLength = 12;
+    [SerializeField] private string defaultName = "Player";
 
     //initialise with empty field with max length setup
     private void Awake()
@@ -42,6 +43,6 @@ public class NameEntryController : MonoBehaviour
             Debug.LogWarning($"No LeaderboardManager in scene.");
         }
 
-        LoadingManager.Instance?.LoadScene(leaderboardSceneBuildIndex);
+        SceneManager.LoadScene(leaderboardSceneBuildIndex);
     }
 }
